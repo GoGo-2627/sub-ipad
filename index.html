@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="zh-HK">
 <head>
+
+<script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime"
+      }
+    }
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>平板電腦借用系統</title>
@@ -81,7 +91,6 @@
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        / @jsxRuntime classic */
         // --- 引入雲端資料庫 Firebase (透過 CDN) ---
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js';
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js';
