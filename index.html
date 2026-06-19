@@ -298,16 +298,48 @@
 
         const getPrintDateString = () => {
             const d = new Date();
-            const z = n => ('0' + n).slice(-2);
             return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`; 
         };
 
         const getISOWeek = (date) => {
-            const termStart = new Date(2026, 1, 2); 
             const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-            const diffTime = target - termStart;
+            const targetDay = target.getDay() || 7;
+            const targetMonday = new Date(target);
+            targetMonday.setDate(target.getDate() - targetDay + 1);
+
+            const month = targetMonday.getMonth(); // 0-11 (0=1月, 1=2月, 7=8月, 8=9月)
+            const year = targetMonday.getFullYear();
+
+            let termYear = year;
+            let termMonth = 1; // 預設為二月 term (1)
+
+            // 劃分半年一期：九月到翌年一月為上學期，二月到八月為下學期
+            if (month >= 8 || month === 0) {
+                termMonth = 8; // 九月
+                if (month === 0) {
+                    termYear = year - 1; // 若是一月，則屬於前一年的九月學期
+                }
+            } else {
+                termMonth = 1; // 二月
+            }
+
+            // 計算學期起點的第一個星期一
+            let term1st = new Date(termYear, termMonth, 1);
+            const term1stDay = term1st.getDay() || 7;
+            let termMonday = new Date(term1st);
+            
+            // 如果 1 號是星期五、六、日，則下週一開始算第 1 週；否則以當週一開始算
+            if (term1stDay >= 5) {
+                termMonday.setDate(term1st.getDate() + (8 - term1stDay));
+            } else {
+                termMonday.setDate(term1st.getDate() - term1stDay + 1);
+            }
+
+            const diffTime = targetMonday - termMonday;
             const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-            return Math.floor(diffDays / 7) + 1;
+            const weekNum = Math.floor(diffDays / 7) + 1;
+            
+            return weekNum > 0 ? weekNum : 1; // 確保不會出現小於 1 的週數
         };
 
         const generateCurrentWeekMsg = (dateStr) => {
@@ -476,6 +508,7 @@
             
             const [loginRole, setLoginRole] = useState(() => sessionStorage.getItem('loginRole')); 
             const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem('isAdmin') === 'true');
+            const [isSuperAdmin, setIsSuperAdmin] = useState(() => sessionStorage.getItem('isSuperAdmin') === 'true');
             
             const [showAdminModal, setShowAdminModal] = useState(false);
             const [unlockTargetId, setUnlockTargetId] = useState(null);
@@ -489,14 +522,12 @@
             const [rearrangeConfirm, setRearrangeConfirm] = useState(null); 
             const [deleteConfirmId, setDeleteConfirmId] = useState(null); 
             const [unassignedPrintAlert, setUnassignedPrintAlert] = useState({ show: false, list: [] });
-            // Added `type: 'worker'` to handle the difference between Worker stats and TA stats
             const [statisticsModal, setStatisticsModal] = useState({ show: false, data: null, endDateStr: '', type: 'worker' });
 
             const [workerStatsStartDate, setWorkerStatsStartDate] = useState('2025-09-01');
             const [taStatsStartDate, setTaStatsStartDate] = useState('2025-09-01');
             const [resetStatsState, setResetStatsState] = useState({ step: 0, password: '', newDate: '' });
 
-            // 特別活動及半日上課自訂設定狀態（載入時會自動以預設格式化進行整理）
             const [holidaysText, setHolidaysText] = useState(() => formatAndSortDateText("特別活動及假期 (不外借平板電腦)\n25/5/2026                        佛誕翌日\n13/7/2026 - 17/7/2026   暑假"));
             const [halfDaysText, setHalfDaysText] = useState(() => formatAndSortDateText("半日上課\n4/6/2026\n5/6/2026\n7/6/2026  - 8/6/2026"));
             const [showHolidaysModal, setShowHolidaysModal] = useState(false);
@@ -1011,7 +1042,7 @@
                 if (booking) {
                     const weekDates = getWeekDates(booking.date);
                     const currentMondayStr = weekDates[0].dateStr;
-                    if (weekStatuses[currentMondayStr]) {
+                    if (weekStatuses[currentMondayStr] && !isSuperAdmin) {
                         showNotification('已完成本週借用安排,不能再作調動', 'error');
                         return;
                     }
@@ -1049,7 +1080,7 @@
                 
                 const weekDates = getWeekDates(newDate);
                 const currentMondayStr = weekDates[0].dateStr;
-                if (weekStatuses[currentMondayStr]) {
+                if (weekStatuses[currentMondayStr] && !isSuperAdmin) {
                     showNotification('已完成本週借用安排,不能再作調動', 'error');
                     return;
                 }
@@ -2112,7 +2143,6 @@
                 
                 const tempContainer = document.createElement('div');
                 tempContainer.innerHTML = htmlContent;
-                // 將渲染容器放置於畫面左上角，以確保 html2canvas 不會出現負數座標導致的嚴重偏移
                 tempContainer.style.position = 'absolute';
                 tempContainer.style.top = '0px';
                 tempContainer.style.left = '0px';
@@ -2492,7 +2522,8 @@
             };
 
             const verifyUnlockPassword = () => {
-                if (adminPassword === 'ktgps123' || stringToHex(adminPassword) === '536d722d32353236') {
+                const inputHex = stringToHex(adminPassword);
+                if (adminPassword === 'ktgps123' || inputHex === '536d722d32353236' || inputHex === '536d722d34323132') {
                     if (unlockTargetId) {
                         const booking = bookings.find(b => String(b.id) === String(unlockTargetId));
                         if (booking) {
@@ -2622,16 +2653,32 @@
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">負責TA</label>
-                                        <select disabled={isWeekArrangedForEdit} value={editTargetBooking.ta} onChange={e => setEditTargetBooking({...editTargetBooking, ta: e.target.value})} className={`w-full p-2 border rounded-md outline-none ${isWeekArrangedForEdit ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}`}>
+                                        <select disabled={isWeekArrangedForEdit && !isSuperAdmin} value={editTargetBooking.ta} onChange={e => setEditTargetBooking({...editTargetBooking, ta: e.target.value})} className={`w-full p-2 border rounded-md outline-none ${isWeekArrangedForEdit && !isSuperAdmin ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}`}>
                                             <option value="">無</option>
                                             {TAS.map(ta => <option key={ta} value={ta}>{ta}</option>)}
                                         </select>
-                                        {isWeekArrangedForEdit && <span className="text-[11px] text-red-500 mt-1 block font-bold leading-tight">本週借用安排已完成，不能更改TA</span>}
+                                        {isWeekArrangedForEdit && !isSuperAdmin && <span className="text-[11px] text-red-500 mt-1 block font-bold leading-tight">本週借用安排已完成，不能更改TA</span>}
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">數量 (部)</label>
                                         <input type="number" min="1" max="40" value={editTargetBooking.qty} onChange={e => setEditTargetBooking({...editTargetBooking, qty: e.target.value})} className="w-full p-2 border rounded-md outline-none" />
                                     </div>
+                                    {isSuperAdmin && (
+                                        <>
+                                            <div>
+                                                <label className="block text-sm font-medium text-[#800000] mb-1">自訂星期 (位置)</label>
+                                                <select value={editTargetBooking.day} onChange={e => setEditTargetBooking({...editTargetBooking, day: e.target.value})} className="w-full p-2 border rounded-md outline-none bg-white font-bold text-[#800000]">
+                                                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-[#800000] mb-1">自訂課節 (位置)</label>
+                                                <select value={editTargetBooking.period} onChange={e => setEditTargetBooking({...editTargetBooking, period: parseInt(e.target.value)})} className="w-full p-2 border rounded-md outline-none bg-white font-bold text-[#800000]">
+                                                    {PERIODS.filter(p => !p.isBreak).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                                </select>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                                 <div className="flex space-x-3 mt-6">
                                     <button type="button" onClick={() => setEditTargetBooking(null)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg transition-colors">取消</button>
@@ -2737,7 +2784,6 @@
                 );
             };
             
-            // 新增：特別活動及假期 Modal
             const renderHolidaysModal = () => {
                 if (!showHolidaysModal) return null;
                 return (
@@ -2769,7 +2815,6 @@
                 );
             };
 
-            // 新增：半日上課 Modal
             const renderHalfDaysModal = () => {
                 if (!showHalfDaysModal) return null;
                 return (
@@ -2807,11 +2852,39 @@
                 e.preventDefault();
                 const inputHex = stringToHex(loginPassword);
                 
-                if (inputHex === '536d722d3132333435') {
+                if (inputHex === '536d722d34323132') { // xxxxx -> 超級管理員
+                    setLoginRole('super');
+                    setIsAdmin(true);
+                    setIsSuperAdmin(true);
+                    sessionStorage.setItem('loginRole', 'super');
+                    sessionStorage.setItem('isAdmin', 'true');
+                    sessionStorage.setItem('isSuperAdmin', 'true');
+                    
+                    const defaultDate = getAdminDefaultDate();
+                    const dObj = new Date(defaultDate);
+                    const dIdx = dObj.getDay();
+                    const defaultDay = (dIdx === 0 || dIdx === 6) ? '週末及週日(不可借用)' : DAYS[dIdx - 1];
+                    
+                    setFormData({
+                        date: defaultDate,
+                        day: defaultDay,
+                        periods: [],
+                        className: '',
+                        subject: '',
+                        teacher: '',
+                        qty: 35,
+                        ta: '',
+                        cart: ''
+                    });
+                    
+                    showNotification('超級管理員登入成功！已解鎖所有固定課堂與限制。', 'success');
+                } else if (inputHex === '536d722d3132333435') {
                     setLoginRole('user');
                     setIsAdmin(false);
+                    setIsSuperAdmin(false);
                     sessionStorage.setItem('loginRole', 'user');
                     sessionStorage.setItem('isAdmin', 'false');
+                    sessionStorage.setItem('isSuperAdmin', 'false');
                     
                     const defaultDate = getUserDefaultDate();
                     const dObj = new Date(defaultDate);
@@ -2834,8 +2907,10 @@
                 } else if (inputHex === '536d722d32353236') {
                     setLoginRole('admin');
                     setIsAdmin(true);
+                    setIsSuperAdmin(false);
                     sessionStorage.setItem('loginRole', 'admin');
                     sessionStorage.setItem('isAdmin', 'true');
+                    sessionStorage.setItem('isSuperAdmin', 'false');
                     
                     const defaultDate = getAdminDefaultDate();
                     const dObj = new Date(defaultDate);
@@ -2858,8 +2933,10 @@
                 } else if (inputHex === '536d722d32363038') {
                     setLoginRole('office');
                     setIsAdmin(false);
+                    setIsSuperAdmin(false);
                     sessionStorage.setItem('loginRole', 'office');
                     sessionStorage.setItem('isAdmin', 'false');
+                    sessionStorage.setItem('isSuperAdmin', 'false');
                     setActiveTab('schedule');
                     showNotification('登入成功！校務處模式');
                 } else {
@@ -2871,8 +2948,10 @@
             const handleLogout = () => {
                 setLoginRole(null);
                 setIsAdmin(false);
+                setIsSuperAdmin(false);
                 sessionStorage.removeItem('loginRole');
                 sessionStorage.removeItem('isAdmin');
+                sessionStorage.removeItem('isSuperAdmin');
                 setLoginPassword('');
                 setActiveTab('form');
                 showNotification('已登出系統');
@@ -2897,8 +2976,9 @@
 
             const renderBookingCard = (booking, themeStyles, viewOnly = false) => {
             const isSystemFixed = booking.isRecurring || (booking.cart === '3號車' && booking.subject?.includes('科技'));
-            const isLocked = isSystemFixed || (booking.isConfirmed && !isAdmin);
-            const isDraggable = !isSystemFixed && (!booking.isConfirmed || isAdmin) && !viewOnly;
+            // 超級管理員不受 SystemFixed 的鎖定限制
+            const isLocked = isSystemFixed ? !isSuperAdmin : (booking.isConfirmed && !isAdmin);
+            const isDraggable = (isSuperAdmin || !isSystemFixed) && (!booking.isConfirmed || isAdmin) && !viewOnly;
             const isTechTeacher = TECH_TEACHERS.includes(booking.teacher);
 
             const taDisplay = booking.subject?.includes('科技') && /^[2-6]/.test(booking.className)
@@ -2911,7 +2991,7 @@
                         draggable={isDraggable}
                         onDragStart={(e) => { if (isDraggable) e.dataTransfer.setData('bookingId', booking.id); }}
                         className={`group p-1.5 sm:p-2 rounded-lg border w-full flex flex-col justify-start shadow-sm h-[75px] sm:h-[86px] overflow-hidden relative ${isDraggable ? 'cursor-move hover:shadow-md' : 'opacity-95'} ${themeStyles.bg} ${themeStyles.border} ${themeStyles.text}`}
-                        title={viewOnly ? "" : (isSystemFixed ? "固定課堂，不可調動或修改" : (booking.isConfirmed ? "點擊解除確認(需輸入管理員密碼)" : "老師/管理員：可按住拖曳以調動，或點擊編輯修改內容"))}
+                        title={viewOnly ? "" : ((isSystemFixed && !isSuperAdmin) ? "固定課堂，不可調動或修改" : (booking.isConfirmed ? "點擊解除確認(需輸入管理員密碼)" : "老師/管理員：可按住拖曳以調動，或點擊編輯修改內容"))}
                     >
                         {isDraggable && (
                         <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 bg-gray-800 text-white p-1 rounded-full pointer-events-none transition-opacity z-20">
@@ -2925,7 +3005,7 @@
                         </span>
                         
                         <div className="text-[12px] sm:text-[14px] flex flex-col items-end flex-shrink-0 leading-tight text-right ml-auto font-bold gap-0.5 sm:gap-1">
-                            {!viewOnly && !isSystemFixed && !booking.isConfirmed && (
+                            {!viewOnly && (isSuperAdmin || !isSystemFixed) && !booking.isConfirmed && (
                                 <div className="flex flex-col items-end gap-0.5 sm:gap-1 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
                                     <div className="flex gap-1 sm:gap-2">
                                         <span onClick={(e) => { e.stopPropagation(); confirmBooking(booking.id); }} className="cursor-pointer text-green-700 hover:underline z-10 whitespace-nowrap">確認</span>
@@ -2934,7 +3014,7 @@
                                     <span onClick={(e) => { e.stopPropagation(); setEditTargetBooking(booking); }} className={`cursor-pointer hover:underline z-10 whitespace-nowrap ${themeStyles.actionText || 'text-blue-700'}`}>編輯</span>
                                 </div>
                             )}
-                            {!viewOnly && !isSystemFixed && booking.isConfirmed && (
+                            {!viewOnly && (isSuperAdmin || !isSystemFixed) && booking.isConfirmed && (
                                 <span
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -2953,7 +3033,7 @@
                                         已確認
                                     </span>
                                 )}
-                                {!viewOnly && isSystemFixed && (
+                                {!viewOnly && isSystemFixed && !isSuperAdmin && (
                                     <span className={`${themeStyles.actionText || 'text-purple-700'} whitespace-nowrap`}>固定</span>
                                 )}
                                 {viewOnly && (booking.isConfirmed || isSystemFixed) && (
@@ -3167,7 +3247,7 @@
                             {generateBookingRangeMsg()}
                         </div>
                         
-                        {/* 新增：管理員設定特別活動與半日上課按鈕 (移至此處) */}
+                        {/* 新增：管理員設定特別活動與半日上課按鈕 */}
                         {isAdmin && (
                             <div className="flex space-x-3 mt-4">
                                 <button
@@ -3464,6 +3544,9 @@
 
                     if (mode === 'duty' || mode === 'office') {
                         const isComputerRoomFixed = /^[2-6]/.test(booking.className) && booking.subject?.includes('科技');
+                        // 安排職務模式下，超級管理員可以直接指派
+                        const canAssign = (mode === 'duty' && (!isComputerRoomFixed || isSuperAdmin));
+                        
                         return (
                             <div key={booking.id} className={`p-1.5 sm:p-2 rounded-lg border w-full flex shadow-sm h-[75px] sm:h-[86px] mb-1 overflow-hidden ${themeStyles.bg} ${themeStyles.border} ${themeStyles.text}`}>
                                 <div className="flex flex-col justify-between flex-1 pr-1 overflow-hidden">
@@ -3471,10 +3554,10 @@
                                         <div className="font-black text-[24px] sm:text-[28px] lg:text-[30px] leading-none tracking-tight truncate">
                                             {booking.className}
                                         </div>
-                                        {mode === 'duty' && !isComputerRoomFixed && (
+                                        {canAssign && (
                                             <span onClick={(e) => { 
                                                 e.stopPropagation(); 
-                                                if (isWorkerArranged) {
+                                                if (isWorkerArranged && !isSuperAdmin) {
                                                     showNotification('已完成本週職工安排，不能再作調動', 'error');
                                                 } else {
                                                     setAssignWorkerTarget({...booking, activeDateStr}); 
@@ -3536,13 +3619,13 @@
                                     {booking.className} {booking.subject}({booking.teacher})
                                 </span>
                                 <div className="text-[12px] sm:text-[14px] flex items-start flex-shrink-0 leading-tight text-right ml-auto font-bold">
-                                    {isSystemFixed ? (
+                                    {isSystemFixed && !isSuperAdmin ? (
                                         <span className={`whitespace-nowrap inline-block flex-shrink-0 ${themeStyles.actionText}`}>固定</span>
-                                    ) : isAdmin ? (
+                                    ) : (isAdmin || isSuperAdmin) ? (
                                         <span 
                                             onClick={(e) => { 
                                                 e.stopPropagation(); 
-                                                if (isWeekArranged) {
+                                                if (isWeekArranged && !isSuperAdmin) {
                                                     showNotification('已完成本週借用安排,不能再作調動', 'error');
                                                 } else {
                                                     setEditTargetBooking(booking); 
@@ -3592,28 +3675,28 @@
                             <div className="text-sm sm:text-xl font-bold text-gray-800 sm:ml-2 flex flex-col sm:flex-row sm:items-center w-full sm:w-auto">
                                 <span className="mb-2 sm:mb-0">({generateCurrentWeekMsg(viewDate)})</span>
                                 
-                                {mode === 'normal' && (loginRole === 'admin' || loginRole === 'office') && (
+                                {mode === 'normal' && (loginRole === 'admin' || loginRole === 'super' || loginRole === 'office') && (
                                     <label className={`w-max ml-0 sm:ml-4 mb-2 sm:mb-0 flex items-center text-sm font-bold text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-200 shadow-sm whitespace-nowrap print-hide ${loginRole === 'office' ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}>
                                         <input
                                             type="checkbox"
                                             className={`mr-1.5 w-4 h-4 text-blue-600 rounded focus:ring-blue-500 ${loginRole === 'office' ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                                             checked={isWeekArranged}
                                             disabled={loginRole === 'office'}
-                                            onChange={() => loginRole === 'admin' && handleWeekStatusToggle(currentMondayStr, isWeekArranged)}
+                                            onChange={() => (loginRole === 'admin' || loginRole === 'super') && handleWeekStatusToggle(currentMondayStr, isWeekArranged)}
                                         />
                                         已完成本週借用安排
                                     </label>
                                 )}
                                 {(mode === 'normal' && loginRole === 'user' && isWeekArranged) ? null : ''}
                                 
-                                {mode === 'duty' && (loginRole === 'admin' || loginRole === 'office') && (
-                                    <label className={`w-max ml-0 sm:ml-4 mb-2 sm:mb-0 flex items-center text-sm font-bold text-green-800 bg-green-50 px-2 py-1 rounded border border-green-200 shadow-sm whitespace-nowrap print-hide ${loginRole !== 'admin' ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}>
+                                {mode === 'duty' && (loginRole === 'admin' || loginRole === 'super' || loginRole === 'office') && (
+                                    <label className={`w-max ml-0 sm:ml-4 mb-2 sm:mb-0 flex items-center text-sm font-bold text-green-800 bg-green-50 px-2 py-1 rounded border border-green-200 shadow-sm whitespace-nowrap print-hide ${(loginRole !== 'admin' && loginRole !== 'super') ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}>
                                         <input
                                             type="checkbox"
-                                            className={`mr-1.5 w-4 h-4 text-green-600 rounded focus:ring-green-500 ${loginRole !== 'admin' ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                                            className={`mr-1.5 w-4 h-4 text-green-600 rounded focus:ring-green-500 ${(loginRole !== 'admin' && loginRole !== 'super') ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                                             checked={isWorkerArranged}
-                                            disabled={loginRole !== 'admin'}
-                                            onChange={() => loginRole === 'admin' && handleWeekWorkerStatusToggle(currentMondayStr, isWorkerArranged)}
+                                            disabled={loginRole !== 'admin' && loginRole !== 'super'}
+                                            onChange={() => (loginRole === 'admin' || loginRole === 'super') && handleWeekWorkerStatusToggle(currentMondayStr, isWorkerArranged)}
                                         />
                                         已完成本週職工安排
                                     </label>
@@ -3648,17 +3731,17 @@
                                 >
                                     <Truck size={14} className="mr-1 sm:w-4 sm:h-4 w-3.5 h-3.5" /> 3號車
                                 </button>
-                                {mode === 'normal' && loginRole === 'admin' && (
+                                {mode === 'normal' && (loginRole === 'admin' || loginRole === 'super') && (
                                     <button onClick={handleExportExcel} className="flex items-center px-2 py-1.5 sm:px-3 sm:py-1.5 rounded transition-colors border-2 text-blue-700 bg-blue-100 border-blue-300 hover:bg-blue-200 whitespace-nowrap flex-shrink-0">
                                         匯出檔案
                                     </button>
                                 )}
-                                {mode === 'normal' && (loginRole === 'admin' || loginRole === 'office' || (loginRole === 'user' && isWeekArranged)) && (
+                                {mode === 'normal' && (loginRole === 'admin' || loginRole === 'super' || loginRole === 'office' || (loginRole === 'user' && isWeekArranged)) && (
                                     <button onClick={handleGeneratePDF} className="flex items-center px-2 py-1.5 sm:px-3 sm:py-1.5 rounded transition-colors border-2 text-[#800000] bg-red-100 border-red-300 hover:bg-red-200 whitespace-nowrap flex-shrink-0">
                                         總表PDF
                                     </button>
                                 )}
-                                {mode === 'normal' && loginRole === 'admin' && (
+                                {mode === 'normal' && (loginRole === 'admin' || loginRole === 'super') && (
                                     <>
                                     <button onClick={handlePrintListFormat} className="flex items-center px-2 py-1.5 sm:px-3 sm:py-1.5 rounded transition-colors border-2 text-indigo-700 bg-indigo-100 border-indigo-300 hover:bg-indigo-200 whitespace-nowrap flex-shrink-0">
                                         列印檔案
@@ -3668,7 +3751,7 @@
                                     </button>
                                     </>
                                 )}
-                                {mode === 'office' && (loginRole === 'admin' || loginRole === 'office') && (
+                                {mode === 'office' && (loginRole === 'admin' || loginRole === 'super' || loginRole === 'office') && (
                                     <>
                                     <button onClick={handleExportOfficeExcel} className="flex items-center px-2 py-1.5 sm:px-3 sm:py-1.5 rounded transition-colors border-2 text-blue-700 bg-blue-100 border-blue-300 hover:bg-blue-200 whitespace-nowrap flex-shrink-0">
                                         匯出檔案
@@ -3690,7 +3773,7 @@
                                 <span className="text-gray-600 mr-1 sm:mr-2 font-bold whitespace-nowrap flex-shrink-0">半日上課：</span>
                                 {weekDates.map(wd => {
                                     const isHalfDay = checkIsHalfDay(currentMondayStr, wd.dateStr);
-                                    const isDisabled = mode !== 'normal' || !isAdmin; 
+                                    const isDisabled = mode !== 'normal' || (!isAdmin && !isSuperAdmin); 
                                     return (
                                         <label key={wd.dateStr} className={`flex items-center px-2 py-1 rounded-md transition-colors mr-1 sm:mr-2 ${isHalfDay ? 'bg-orange-100 border border-orange-300 text-orange-800' : 'bg-gray-50 border border-gray-200 text-gray-700'} ${isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-orange-50'}`}>
                                             <input
@@ -3772,7 +3855,7 @@
                                     const remark = blackoutReason || cellBookings.find(b => b.isSystem).remark;
                                     return (
                                         <td key={`${wd.name}-${period.id}`} className="border border-black p-1 sm:p-2 align-middle text-center bg-[#f5f5dc]">
-                                        <span className="text-black font-extrabold text-[18px] sm:text-[22px] lg:text-[26px] print:text-[15px]">{remark}</span>
+                                        <span className="text-black font-extrabold text-[18px] sm:text-[22px] lg:text-[26px] print:text-[15px] text-black">{remark}</span>
                                         </td>
                                     );
                                     }
@@ -4033,7 +4116,7 @@
                 <header className="w-full max-w-full mx-auto mb-4 md:mb-6 text-center relative pt-4 sm:pt-0 print-hide px-2">
                     <div className="absolute right-0 top-0 sm:right-2 sm:top-2 hidden sm:block">
                         <button onClick={handleLogout} className="flex items-center text-xs sm:text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-full transition-colors shadow-sm">
-                        <Unlock size={14} className="mr-1" /> 登出 ({loginRole === 'admin' ? '系統管理員' : loginRole === 'office' ? '校務處' : '一般使用者'})
+                        <Unlock size={14} className="mr-1" /> 登出 ({loginRole === 'super' ? '超級管理員' : loginRole === 'admin' ? '系統管理員' : loginRole === 'office' ? '校務處' : '一般使用者'})
                         </button>
                     </div>
                     <h1 className="text-3xl font-extrabold text-gray-900 mb-2 tracking-tight">
@@ -4042,7 +4125,7 @@
                     </h1>
                     <div className="sm:hidden flex justify-end mt-2 pr-2">
                         <button onClick={handleLogout} className="flex items-center text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-full transition-colors shadow-sm">
-                        <Unlock size={12} className="mr-1" /> 登出 ({loginRole === 'admin' ? '系統管理員' : loginRole === 'office' ? '校務處' : '一般使用者'})
+                        <Unlock size={12} className="mr-1" /> 登出 ({loginRole === 'super' ? '超級管理員' : loginRole === 'admin' ? '系統管理員' : loginRole === 'office' ? '校務處' : '一般使用者'})
                         </button>
                     </div>
                 </header>
@@ -4080,7 +4163,7 @@
                         <span className="sm:hidden">總表(課室)</span>
                         <span className="hidden sm:inline">本週總表</span>
                     </button>
-                    {(loginRole === 'admin' || loginRole === 'office') && (
+                    {(loginRole === 'admin' || loginRole === 'super' || loginRole === 'office') && (
                         <>
                         <button
                             onClick={() => setActiveTab('duty')}
